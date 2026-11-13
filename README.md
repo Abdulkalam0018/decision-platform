@@ -10,10 +10,10 @@ claim processing, employee onboarding, vendor approval and document verification
 
 ```mermaid
 flowchart LR
-    req[POST request] --> schema[Schema validation] --> idem[Idempotency and<br/>duplicate check] --> graph[Stage graph<br/>rules, compute,<br/>dependency, branch]
-    graph -->|one checkpoint transaction per stage| graph
-    graph --> out[APPROVED, REJECTED, MANUAL_REVIEW,<br/>RETRY_PENDING, FAILED]
-    out --> rec[Explanation, lifecycle history,<br/>audit chain, outbox event]
+    req["POST request"] --> schema["Schema validation"] --> idem["Idempotency and duplicate check"] --> graph["Stage graph: rules, compute, dependency, branch"]
+    graph -->|"one checkpoint per stage"| graph
+    graph --> out["APPROVED / REJECTED / MANUAL_REVIEW / RETRY_PENDING / FAILED"]
+    out --> rec["Explanation, lifecycle history, audit chain, outbox event"]
 ```
 
 ## Quick start
