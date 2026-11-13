@@ -1,0 +1,17 @@
+{
+  "applicant": {
+    "id": "APP-1001",
+    "name": "Asha Rao",
+    "age": 34,
+    "email": "asha@example.com",
+    "monthly_income": 150000,
+    "monthly_debt": 10000,
+    "employment_status": "employed",
+    "country": "IN"
+  },
+  "loan": {
+    "amount": 600000,
+    "term_months": 60,
+    "purpose": "auto"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "claim_id": "CLM-2026-0001",
+  "policy_number": "POL-500",
+  "claimant": {
+    "id": "CUS-9",
+    "name": "Ravi Mehta"
+  },
+  "incident": {
+    "date": "2026-11-01",
+    "type": "collision",
+    "description": "Rear-ended at a traffic signal"
+  },
+  "amount_claimed": 42000,
+  "documents": [
+    {
+      "type": "repair_estimate",
+      "number": "EST-7781"
+    },
+    {
+      "type": "photo",
+      "number": "IMG-2231"
+    }
+  ]
+}

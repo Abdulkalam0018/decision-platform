@@ -1,0 +1,17 @@
+{
+  "applicant": {
+    "id": "APP-1001",
+    "name": "Asha Rao",
+    "age": "thirty",
+    "email": "not-an-email",
+    "monthly_debt": 10000,
+    "employment_status": "employed",
+    "country": "IN",
+    "is_admin": true
+  },
+  "loan": {
+    "amount": 600000,
+    "term_months": 2,
+    "purpose": "yacht"
+  }
+}

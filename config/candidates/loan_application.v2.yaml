@@ -1,0 +1,231 @@
+# Loan application v2: a RULE CHANGE, published without touching code.
+# Changes vs v1 (see docs/DECISION_EXAMPLES.md, "rule change" section):
+#   * min_credit_score 620 -> 650 (tighter credit policy)
+#   * max_dti 0.45 -> 0.40
+#   * NEW conditional rule RISK-007: applicants under 21 borrowing more than
+#     young_applicant_max go to manual review.
+# Kept in config/candidates so it is NOT auto-activated at startup; publish
+# and activate it via the API/CLI to demonstrate a live rule change.
+workflow: loan_application
+version: 2
+owner: retail-credit-risk
+description: Consumer loan approval. v2 tightens credit and DTI limits and adds a young-applicant rule.
+
+input_schema:
+  type: object
+  additionalProperties: false
+  required: [applicant, loan]
+  properties:
+    applicant:
+      type: object
+      additionalProperties: false
+      required: [id, name, age, email, monthly_income, employment_status]
+      properties:
+        id: {type: string, pattern: "^[A-Z]+-[0-9A-Z-]+$"}
+        name: {type: string, minLength: 1, maxLength: 200}
+        age: {type: integer, minimum: 0, maximum: 130}
+        email: {type: string, pattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"}
+        monthly_income: {type: number, minimum: 0}
+        monthly_debt: {type: number, minimum: 0}
+        employment_status: {enum: [employed, self_employed, unemployed, retired, student]}
+        years_employed: {type: number, minimum: 0}
+        country: {type: string, pattern: "^[A-Z]{2}$"}
+    loan:
+      type: object
+      additionalProperties: false
+      required: [amount, term_months, purpose]
+      properties:
+        amount: {type: number, exclusiveMinimum: 0}
+        term_months: {type: integer, minimum: 6, maximum: 360}
+        purpose: {enum: [home, auto, education, personal, business]}
+        collateral_value: {type: number, minimum: 0}
+
+parameters:
+  min_age: 18
+  max_amount: 5000000
+  supported_countries: [IN, US, GB, SG]
+  min_years_self_employed: 2
+  min_credit_score: 650
+  review_credit_score: 680
+  max_dti: 0.40
+  review_dti: 0.36
+  max_fraud_score: 80
+  max_ltv: 0.80
+  high_value_threshold: 1000000
+  high_value_min_score: 740
+  young_applicant_age: 21
+  young_applicant_max: 200000
+
+dependencies:
+  credit_bureau:
+    type: credit_bureau
+    timeout_ms: 800
+    retry: {max_attempts: 3, base_delay_ms: 50, max_delay_ms: 400}
+    circuit_breaker: {failure_threshold: 5, reset_timeout_s: 30}
+  fraud_screen:
+    type: fraud_screen
+    timeout_ms: 500
+    retry: {max_attempts: 2, base_delay_ms: 50, max_delay_ms: 200}
+    circuit_breaker: {failure_threshold: 5, reset_timeout_s: 30}
+
+duplicate_check:
+  fields: [applicant.id, loan.purpose, loan.amount]
+  window_hours: 24
+  action: return_existing
+
+retry:
+  max_request_retries: 3
+  base_delay_s: 60
+  max_delay_s: 900
+  on_exhausted: manual_review
+
+stages:
+  - id: eligibility
+    type: rules
+    rules:
+      - id: ELIG-001
+        name: Applicant is an adult
+        kind: mandatory
+        condition: "input.applicant.age >= params.min_age"
+        on_fail: reject
+        reason: "Applicant age {input.applicant.age} is below the minimum age {params.min_age}"
+      - id: ELIG-002
+        name: Applicant has income
+        kind: mandatory
+        condition: "input.applicant.monthly_income > 0"
+        on_fail: reject
+        reason: "Declared monthly income is {input.applicant.monthly_income}; income is required"
+      - id: ELIG-003
+        name: Amount within product limit
+        kind: threshold
+        condition: "input.loan.amount <= params.max_amount"
+        on_fail: reject
+        reason: "Requested {input.loan.amount} exceeds the product limit {params.max_amount}"
+      - id: ELIG-004
+        name: Country is supported
+        kind: conditional
+        when: "exists(input.applicant.country)"
+        condition: "input.applicant.country in params.supported_countries"
+        on_fail: reject
+        reason: "Country {input.applicant.country} is not in the supported list {params.supported_countries}"
+      - id: ELIG-005
+        name: Applicant not unemployed
+        kind: mandatory
+        condition: "input.applicant.employment_status != 'unemployed'"
+        on_fail: review
+        reason: "Applicant is unemployed; income source must be verified by an underwriter"
+      - id: ELIG-006
+        name: Self-employed tenure
+        kind: conditional
+        when: "input.applicant.employment_status == 'self_employed'"
+        condition: "input.applicant.years_employed >= params.min_years_self_employed"
+        on_fail: review
+        on_missing: review
+        reason: "Self-employed for {input.applicant.years_employed} years; minimum is {params.min_years_self_employed}"
+    next: affordability
+
+  - id: affordability
+    type: compute
+    outputs:
+      monthly_installment: "round(input.loan.amount / input.loan.term_months, 2)"
+      dti: "round((input.applicant.monthly_debt if exists(input.applicant.monthly_debt) else 0) / input.applicant.monthly_income + input.loan.amount / input.loan.term_months / input.applicant.monthly_income, 4)"
+      ltv: "round(input.loan.amount / input.loan.collateral_value, 4) if exists(input.loan.collateral_value) and input.loan.collateral_value > 0 else None"
+    next: credit_check
+
+  - id: credit_check
+    type: dependency
+    dependency: credit_bureau
+    request:
+      applicant_id: "input.applicant.id"
+    output_key: credit
+    on_unavailable: retry_later
+    on_error: manual_review
+    next: fraud_check
+
+  - id: fraud_check
+    type: dependency
+    dependency: fraud_screen
+    request:
+      email: "input.applicant.email"
+      amount: "input.loan.amount"
+    output_key: fraud
+    on_unavailable: retry_later
+    on_error: manual_review
+    next: risk_assessment
+
+  - id: risk_assessment
+    type: rules
+    rules:
+      - id: RISK-001
+        name: Minimum credit score
+        kind: threshold
+        condition: "credit.score >= params.min_credit_score"
+        on_fail: reject
+        reason: "Credit score {credit.score} is below the minimum {params.min_credit_score}"
+      - id: RISK-002
+        name: No open defaults
+        kind: mandatory
+        condition: "credit.open_defaults == 0"
+        on_fail: review
+        reason: "Bureau reports {credit.open_defaults} open default(s)"
+      - id: RISK-003
+        name: Debt-to-income ceiling
+        kind: threshold
+        condition: "derived.dti <= params.max_dti"
+        on_fail: reject
+        reason: "Debt-to-income ratio {derived.dti} exceeds the maximum {params.max_dti}"
+      - id: RISK-004
+        name: Fraud score acceptable
+        kind: threshold
+        condition: "fraud.risk_score <= params.max_fraud_score"
+        on_fail: review
+        reason: "Fraud risk score {fraud.risk_score} exceeds {params.max_fraud_score}"
+      - id: RISK-005
+        name: Loan-to-value ceiling
+        kind: conditional
+        when: "derived.ltv is not None"
+        condition: "derived.ltv <= params.max_ltv"
+        on_fail: review
+        reason: "Loan-to-value {derived.ltv} exceeds {params.max_ltv}"
+      - id: RISK-006
+        name: Prime credit band
+        kind: threshold
+        condition: "credit.score >= params.review_credit_score"
+        on_fail: flag
+        reason: "Credit score {credit.score} is below the prime band {params.review_credit_score} (non-blocking)"
+      - id: RISK-007
+        name: Young applicant exposure cap
+        kind: conditional
+        when: "input.applicant.age < params.young_applicant_age"
+        condition: "input.loan.amount <= params.young_applicant_max"
+        on_fail: review
+        reason: "Applicant aged {input.applicant.age} requests {input.loan.amount}; cap for under-{params.young_applicant_age} is {params.young_applicant_max}"
+    next: routing
+
+  - id: routing
+    type: branch
+    branches:
+      - label: high value loan
+        when: "input.loan.amount > params.high_value_threshold"
+        next: high_value_checks
+      - label: elevated debt-to-income
+        when: "derived.dti > params.review_dti"
+        next: manual_review
+    default: approve
+
+  - id: high_value_checks
+    type: rules
+    rules:
+      - id: HV-001
+        name: Strong credit for high value
+        kind: threshold
+        condition: "credit.score >= params.high_value_min_score"
+        on_fail: review
+        reason: "High-value loan needs score >= {params.high_value_min_score}; applicant has {credit.score}"
+      - id: HV-002
+        name: Collateral provided
+        kind: mandatory
+        condition: "exists(input.loan.collateral_value)"
+        on_fail: review
+        reason: "High-value loan requested without collateral"
+    next: approve

@@ -1,0 +1,11 @@
+{
+  "requested_by": "procurement.lead",
+  "vendor": {
+    "name": "Acme Facility Services",
+    "country": "IN",
+    "tax_id": "24AAACA1234F1Z5",
+    "category": "facilities",
+    "annual_contract_value": 300000,
+    "bank_account_verified": true
+  }
+}

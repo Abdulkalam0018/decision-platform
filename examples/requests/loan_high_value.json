@@ -1,0 +1,19 @@
+{
+  "applicant": {
+    "id": "APP-4001",
+    "name": "Rohan Das",
+    "age": 41,
+    "email": "rohan@example.com",
+    "monthly_income": 900000,
+    "monthly_debt": 50000,
+    "employment_status": "self_employed",
+    "years_employed": 9,
+    "country": "IN"
+  },
+  "loan": {
+    "amount": 2000000,
+    "term_months": 120,
+    "purpose": "home",
+    "collateral_value": 3200000
+  }
+}

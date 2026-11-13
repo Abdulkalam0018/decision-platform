@@ -1,0 +1,17 @@
+{
+  "subject_id": "SUB-42",
+  "documents": [
+    {
+      "type": "passport",
+      "number": "Z1234567",
+      "expiry_date": "2030-05-01",
+      "issuing_country": "IN"
+    },
+    {
+      "type": "utility_bill",
+      "number": "UB-9981",
+      "expiry_date": "2027-02-01",
+      "issuing_country": "IN"
+    }
+  ]
+}

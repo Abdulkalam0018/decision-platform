@@ -1,0 +1,139 @@
+# Employee onboarding. Shows list functions (count_where, membership tests),
+# conditional work-permit rule and access-based routing.
+workflow: employee_onboarding
+version: 1
+owner: people-operations
+description: Pre-start checks for new hires, background screening and access provisioning approval.
+
+input_schema:
+  type: object
+  additionalProperties: false
+  required: [candidate, role, documents, contract_signed, requested_access]
+  properties:
+    candidate:
+      type: object
+      required: [id, name, email, country]
+      properties:
+        id: {type: string, pattern: "^CAND-[0-9A-Z-]+$"}
+        name: {type: string, minLength: 1}
+        email: {type: string, pattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"}
+        country: {type: string, pattern: "^[A-Z]{2}$"}
+    role:
+      type: object
+      required: [title, department, level, start_date]
+      properties:
+        title: {type: string}
+        department: {type: string}
+        level: {enum: [L1, L2, L3, L4, L5, L6]}
+        start_date: {type: string, pattern: "^\\d{4}-\\d{2}-\\d{2}$"}
+    documents:
+      type: array
+      items:
+        type: object
+        required: [type, number]
+        properties:
+          type: {enum: [passport, national_id, work_permit, degree_certificate, tax_form]}
+          number: {type: string}
+    contract_signed: {type: boolean}
+    requested_access:
+      type: array
+      items: {enum: [email, hr_portal, code_repo, prod_read, prod_admin, finance_ledger]}
+
+parameters:
+  home_countries: [IN]
+  min_notice_days: 3
+  privileged_access: [prod_admin, finance_ledger]
+
+dependencies:
+  background:
+    type: background_check
+    timeout_ms: 2000
+    retry: {max_attempts: 3, base_delay_ms: 100, max_delay_ms: 800}
+  doc_service:
+    type: document_verifier
+    timeout_ms: 1500
+
+duplicate_check:
+  fields: [candidate.id]
+  window_hours: 2160
+  action: reject
+
+stages:
+  - id: preconditions
+    type: rules
+    rules:
+      - id: ONB-001
+        name: Contract signed
+        kind: mandatory
+        condition: "input.contract_signed == true"
+        on_fail: reject
+        reason: "Employment contract has not been signed"
+      - id: ONB-002
+        name: Identity document present
+        kind: mandatory
+        condition: "count_where(input.documents, 'type', 'passport') + count_where(input.documents, 'type', 'national_id') >= 1"
+        on_fail: reject
+        reason: "No passport or national ID supplied"
+      - id: ONB-003
+        name: Work permit for non-resident hires
+        kind: conditional
+        when: "input.candidate.country not in params.home_countries"
+        condition: "count_where(input.documents, 'type', 'work_permit') >= 1"
+        on_fail: reject
+        reason: "Candidate from {input.candidate.country} requires a work permit"
+      - id: ONB-004
+        name: Enough notice before start date
+        kind: threshold
+        condition: "days_until(input.role.start_date) >= params.min_notice_days"
+        on_fail: review
+        reason: "Start date {input.role.start_date} leaves fewer than {params.min_notice_days} days to provision"
+    next: background_screening
+
+  - id: background_screening
+    type: dependency
+    dependency: background
+    request:
+      candidate_id: "input.candidate.id"
+    output_key: background
+    on_unavailable: retry_later
+    on_error: manual_review
+    next: background_rules
+
+  - id: background_rules
+    type: rules
+    rules:
+      - id: BGC-001
+        name: Background check clear
+        kind: mandatory
+        condition: "background.status == 'clear'"
+        on_fail: review
+        reason: "Background check returned '{background.status}'"
+    next: document_verification
+
+  - id: document_verification
+    type: dependency
+    dependency: doc_service
+    request:
+      documents: "input.documents"
+    output_key: docs
+    on_error: manual_review
+    next: document_rules
+
+  - id: document_rules
+    type: rules
+    rules:
+      - id: DOC-101
+        name: Documents verified
+        kind: mandatory
+        condition: "docs.all_verified"
+        on_fail: reject
+        reason: "Submitted documents failed verification"
+    next: access_routing
+
+  - id: access_routing
+    type: branch
+    branches:
+      - label: privileged access needs security sign-off
+        when: "'prod_admin' in input.requested_access or 'finance_ledger' in input.requested_access"
+        next: manual_review
+    default: approve

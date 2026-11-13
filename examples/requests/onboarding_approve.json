@@ -1,0 +1,29 @@
+{
+  "candidate": {
+    "id": "CAND-501",
+    "name": "Meera Iyer",
+    "email": "meera@example.com",
+    "country": "IN"
+  },
+  "role": {
+    "title": "Backend Engineer",
+    "department": "Platform",
+    "level": "L3",
+    "start_date": "2026-12-01"
+  },
+  "documents": [
+    {
+      "type": "passport",
+      "number": "P1234567"
+    },
+    {
+      "type": "degree_certificate",
+      "number": "DEG-88"
+    }
+  ],
+  "contract_signed": true,
+  "requested_access": [
+    "email",
+    "code_repo"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "applicant": {
+    "id": "APP-3001",
+    "name": "Farah Khan",
+    "age": 34,
+    "email": "farah@example.com",
+    "monthly_income": 120000,
+    "monthly_debt": 40000,
+    "employment_status": "employed",
+    "country": "IN"
+  },
+  "loan": {
+    "amount": 600000,
+    "term_months": 60,
+    "purpose": "auto"
+  }
+}

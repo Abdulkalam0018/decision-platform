@@ -1,0 +1,168 @@
+# Insurance claim processing. Shows: date-based rules, a dependency whose
+# permanent error (unknown policy) rejects, computed payout, document
+# verification and value-based routing.
+workflow: insurance_claim
+version: 1
+owner: claims-operations
+description: Motor/property/medical claim triage with policy coverage and document checks.
+
+input_schema:
+  type: object
+  additionalProperties: false
+  required: [claim_id, policy_number, claimant, incident, amount_claimed, documents]
+  properties:
+    claim_id: {type: string, minLength: 3}
+    policy_number: {type: string, pattern: "^POL-[0-9]+$"}
+    claimant:
+      type: object
+      required: [id, name]
+      properties:
+        id: {type: string}
+        name: {type: string, minLength: 1}
+    incident:
+      type: object
+      additionalProperties: false
+      required: [date, type, description]
+      properties:
+        date: {type: string, format: date, pattern: "^\\d{4}-\\d{2}-\\d{2}$"}
+        type: {enum: [collision, theft, fire, flood, medical]}
+        description: {type: string, minLength: 10}
+    amount_claimed: {type: number, exclusiveMinimum: 0}
+    police_report_number: {type: string}
+    documents:
+      type: array
+      minItems: 1
+      items:
+        type: object
+        required: [type, number]
+        properties:
+          type: {type: string}
+          number: {type: string}
+
+parameters:
+  max_report_days: 90
+  auto_approve_limit: 50000
+  min_doc_confidence: 0.9
+
+dependencies:
+  policy_service:
+    type: policy_lookup
+    timeout_ms: 600
+    retry: {max_attempts: 3, base_delay_ms: 50, max_delay_ms: 300}
+  doc_service:
+    type: document_verifier
+    timeout_ms: 1500
+    retry: {max_attempts: 2, base_delay_ms: 100, max_delay_ms: 400}
+
+duplicate_check:
+  fields: [claim_id]
+  window_hours: 720
+  action: return_existing
+
+retry:
+  max_request_retries: 2
+  base_delay_s: 120
+  max_delay_s: 1800
+  on_exhausted: manual_review
+
+stages:
+  - id: intake_checks
+    type: rules
+    rules:
+      - id: CLM-001
+        name: Incident date not in the future
+        kind: mandatory
+        condition: "days_since(input.incident.date) >= 0"
+        on_fail: reject
+        reason: "Incident date {input.incident.date} is in the future"
+      - id: CLM-002
+        name: Reported within the notification window
+        kind: threshold
+        condition: "days_since(input.incident.date) <= params.max_report_days"
+        on_fail: reject
+        reason: "Claim reported more than {params.max_report_days} days after the incident ({input.incident.date})"
+      - id: CLM-003
+        name: Theft requires police report
+        kind: conditional
+        when: "input.incident.type == 'theft'"
+        condition: "exists(input.police_report_number)"
+        on_fail: reject
+        reason: "Theft claims require a police report number"
+    next: policy
+
+  - id: policy
+    type: dependency
+    dependency: policy_service
+    request:
+      policy_number: "input.policy_number"
+    output_key: policy
+    on_unavailable: retry_later
+    on_error: reject
+    next: coverage
+
+  - id: coverage
+    type: rules
+    rules:
+      - id: COV-001
+        name: Policy is active
+        kind: mandatory
+        condition: "policy.active"
+        on_fail: reject
+        reason: "Policy {input.policy_number} is not active"
+      - id: COV-002
+        name: Incident after policy start
+        kind: mandatory
+        condition: "input.incident.date >= policy.policy_start"
+        on_fail: reject
+        reason: "Incident on {input.incident.date} predates policy start {policy.policy_start}"
+      - id: COV-003
+        name: Within coverage limit
+        kind: threshold
+        condition: "input.amount_claimed <= policy.coverage_limit"
+        on_fail: review
+        reason: "Claimed {input.amount_claimed} exceeds coverage limit {policy.coverage_limit}"
+    next: payout
+
+  - id: payout
+    type: compute
+    outputs:
+      payable: "max(0, min(input.amount_claimed, policy.coverage_limit) - policy.deductible)"
+    next: documents
+
+  - id: documents
+    type: dependency
+    dependency: doc_service
+    request:
+      documents: "input.documents"
+    output_key: docs
+    on_unavailable: retry_later
+    on_error: manual_review
+    next: document_rules
+
+  - id: document_rules
+    type: rules
+    rules:
+      - id: DOC-001
+        name: All documents verified
+        kind: mandatory
+        condition: "docs.all_verified"
+        on_fail: review
+        reason: "One or more documents failed verification"
+      - id: DOC-002
+        name: Verification confidence
+        kind: threshold
+        condition: "docs.min_confidence >= params.min_doc_confidence"
+        on_fail: review
+        reason: "Lowest document confidence {docs.min_confidence} is below {params.min_doc_confidence}"
+    next: settlement_routing
+
+  - id: settlement_routing
+    type: branch
+    branches:
+      - label: nothing payable after deductible
+        when: "derived.payable == 0"
+        next: reject
+      - label: above auto-approve limit
+        when: "derived.payable > params.auto_approve_limit"
+        next: manual_review
+    default: approve

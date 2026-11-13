@@ -1,0 +1,11 @@
+{
+  "requested_by": "procurement.lead",
+  "vendor": {
+    "name": "Sanctioned Trading LLC",
+    "country": "IN",
+    "tax_id": "27AAACS9999K1Z2",
+    "category": "logistics",
+    "annual_contract_value": 800000,
+    "bank_account_verified": true
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "applicant": {
+    "id": "APP-2001",
+    "name": "Kabir Shah",
+    "age": 17,
+    "email": "kabir@example.com",
+    "monthly_income": 150000,
+    "monthly_debt": 10000,
+    "employment_status": "employed",
+    "country": "IN"
+  },
+  "loan": {
+    "amount": 6500000,
+    "term_months": 60,
+    "purpose": "business"
+  }
+}
